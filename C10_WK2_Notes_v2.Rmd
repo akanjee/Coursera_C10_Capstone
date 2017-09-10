@@ -1,0 +1,161 @@
+---
+title: "C10_Wk_2_Notes"
+author: "Amyn"
+date: '2017-05-21'
+output:
+  html_document: default
+  pdf_document: default
+---
+
+#Task 2 
+
+Exploratory analysis - perform a thorough exploratory analysis of the data, understanding the distribution of words and relationship between the words in the corpora.
+Understand frequencies of words and word pairs - build figures and tables to understand variation in the frequencies of words and word pairs in the data.
+
+#Questions to consider
+
+1. Some words are more frequent than others - what are the distributions of word frequencies?
+1. What are the frequencies of 2-grams and 3-grams in the dataset?
+1. How many unique words do you need in a frequency sorted dictionary to cover 50% of all word instances in the language? 90%?
+1. How do you evaluate how many of the words come from foreign languages?
+1. Can you think of a way to increase the coverage -- identifying words that may not be in the corpora or using a smaller number of words in the dictionary to cover the same number of phrases?
+
+# Setup the Environment for the Analysis 
+
+We will first set the working directory and load the required packages for this analysis
+
+```{r}
+    ("~/Documents/R Working Directory/Course_10_Capstone/Data_Set/final/en_US")
+
+    library(NLP)
+    library(tm)
+    library(R.utils)
+    library(stringi)
+    library(ngram)
+    library(ggplot2)
+    library(SnowballC)
+    library(dplyr)
+    library(slam)
+
+
+```
+
+# Read in the data
+We will now read in the data from the three sample files using the readLines function
+```{r}
+### Read in the Twitter Informatio
+### Set the encoding to LATIN1 to make sure that we are only looking at normal characters
+### Set the tool to skip Null Lines
+    
+    blogs <- readLines("~/Documents/R Working Directory/Course_10_Capstone/Data_Set/final/en_US/en_US.blogs.txt", encoding = "latin1" ,skipNul = TRUE)
+    news <- readLines("~/Documents/R Working Directory/Course_10_Capstone/Data_Set/final/en_US/en_US.news.txt", encoding = "latin1" ,skipNul = TRUE)
+    twitter <- readLines("~/Documents/R Working Directory/Course_10_Capstone/Data_Set/final/en_US/en_US.twitter.txt", encoding = "latin1", skipNul = TRUE)
+    
+    
+```
+
+# Analyse the data
+After reading in the data we'll do some high level analysis on the data to see what we've got
+
+```{r, echo=FALSE}
+
+    ### Get the Summary Stats for the number of lines and words in each of the source files
+    source_summary_stats <- data.frame(Source = c("blog", "twitter", "news"), Lines = NA, Words = NA)
+    sourcelist <- list(blogs = blogs, twitter = twitter, news = news)
+    source_summary_stats$Lines <- sapply(sourcelist, length) ### Find the number of lines per source file
+    source_summary_stats$Words <- sapply(sourcelist, wordcount) ### Find the number of words per source file
+    source_summary_stats$Words ### Output the list
+```
+
+
+# Sample and Clense the Data
+Given the size of the sample sets we are going to need to use a sample a portion of each sample data file.  We'll asssume that 5% of the rows in each file is adequate for this analysis.
+
+```{r}
+    
+    set.seed(1234) # Set the seed for testing purposes
+    new_words <- c(sample(blogs, length(blogs) * 0.05), 
+                   sample(news, length(news) * 0.05),
+                   sample(twitter, length(twitter) * 0.05))
+    sample_summary_stats <- data.frame(Source = "Aggregated Data", Lines = NA, Words = NA)
+    sample_summary_stats$Lines <- length(new_words) ### Find the number of lines per source file
+    sample_summary_stats$Words <- wordcount(new_words) ### Find the number of words per source file
+    sample_summary_stats$Words ### Output the list
+    
+    sample_summary_stats
+    
+    ### Get rid of the files that we just read in so that we can use the memory for other things
+    
+    rm(blogs)
+    rm(news)
+    rm(twitter)
+```
+
+# Create the Corpus 
+
+We'll use the Corpus functions from the TM Package to create a Corpus for our analysis.  We will convert all of the characters to lower class to simplify our analysis.
+
+```{r}
+
+    ### create corpus classs
+    my_corpus <- VCorpus(VectorSource(new_words))
+    
+    ### Cleanse the information (again if required)
+    my_corpus <- tm_map(my_corpus, content_transformer(tolower))
+    my_corpus <- tm_map(my_corpus, removeNumbers)
+    my_corpus <- tm_map(my_corpus, removePunctuation) ### Remove any puncutation marks
+    my_corpus <- tm_map(my_corpus, stripWhitespace)
+    
+    my_corpus_for_Ngram <-my_corpus ### Create a duplicate of the corpus before removing Stop & Stem Words
+    
+    my_corpus <- tm_map(my_corpus, stemDocument) ### Remove Stems i.e., Tone, Tones, Toner --> Tone
+    my_corpus <- tm_map(my_corpus, removeWords, stopwords("english"))
+    
+    ### Tokenize the Corpus so we can do our analysis
+    
+    myTdm <- TermDocumentMatrix(my_corpus)
+
+```
+
+# Identify the most frequent word in our analysis and sort from largest to smallest; show the top 50 words
+
+```{r}
+    sample_wordfreq <- data.frame(myTdm$dimnames$Terms,WordFreq = NA) ### Create the matrix for our sample set word frequency
+    sample_wordfreq$WordFreq <-row_sums(myTdm,na.rm = FALSE) ### Use the ROW_SUM command to get the count of words from the Term Document Matrix which is a Simple Triplet Matrix
+    sample_wordfreq <- arrange(sample_wordfreq, -WordFreq)
+    head(sample_wordfreq,50)
+```
+
+# Create our N-Grams
+We are intersted in knowing the frequency of 2 and 3 N-Grams in the sample set for our analysis (we know the Unigrams from the word count).  We'll output the information at the end of the day.  
+
+Note for Bigram & Trigram analysis I am leaving in the Stem & Stop Words as they impact the string structure and would be interesting for the predictive model.
+
+```{r}
+
+### BrigramTokenizer & TrigramTokenizer code sourced from http://tm.r-forge.r-project.org/faq.html
+
+    BigramTokenizer <-  function(x) unlist(lapply(ngrams(words(x), 2), paste, collapse = " "), use.names = FALSE)
+    TrigramTokenizer <-  function(x) unlist(lapply(ngrams(words(x), 3), paste, collapse = " "), use.names = FALSE)
+    QuadgramTokenizer <-  function(x) unlist(lapply(ngrams(words(x), 4), paste, collapse = " "), use.names = FALSE)
+   
+
+    bi_tdm <- TermDocumentMatrix(my_corpus_for_Ngram, control = list(tokenize = BigramTokenizer))
+    tri_tdm <- TermDocumentMatrix(my_corpus_for_Ngram, control = list(tokenize = TrigramTokenizer))
+    quad_tdm <- TermDocumentMatrix(my_corpus_for_Ngram, control = list(tokenize = QuadgramTokenizer))
+
+    
+    bi_wordfreq <- data.frame(bi_tdm$dimnames$Terms,WordFreq = NA) ### Create the matrix for our sample set word frequency
+    bi_wordfreq$WordFreq <-row_sums(bi_tdm,na.rm = FALSE) ### Use the ROW_SUM command to get the count of words from the Term       Document Matrix which is a Simple Triplet Matrix
+    bi_wordfreq <- arrange(bi_wordfreq, -WordFreq)
+    head(bi_wordfreq,50)
+    
+    tri_wordfreq <- data.frame(tri_tdm$dimnames$Terms,WordFreq = NA) ### Create the matrix for our sample set word frequency
+    tri_wordfreq$WordFreq <-row_sums(tri_tdm,na.rm = FALSE) ### Use the ROW_SUM command to get the count of words from the Term       Document Matrix which is a Simple Triplet Matrix
+    tri_wordfreq <- arrange(tri_wordfreq, -WordFreq)
+    head(tri_wordfreq,50)
+    
+    quad_wordfreq <- data.frame(quad_tdm$dimnames$Terms,WordFreq = NA) ### Create the matrix for our sample set word frequency
+    quad_wordfreq$WordFreq <-row_sums(tri_tdm,na.rm = FALSE) ### Use the ROW_SUM command to get the count of words from the Term       Document Matrix which is a Simple Triplet Matrix
+    quad_wordfreq <- arrange(tri_wordfreq, -WordFreq)
+    head(tri_wordfreq,50)
