@@ -1,0 +1,316 @@
+---
+title: "C10_Wk_3_Noetes + Quiz"
+author: "Amyn"
+date: '2017-07-21'
+output: html_document
+---
+
+
+# Setup the Environment for the Analysis 
+
+We will first set the working directory and load the required packages for this analysis
+
+```{r, echo=FALSE}
+    ("~/Documents/R Working Directory/Course_10_Capstone/Data_Set/final/en_US")
+
+    library(NLP)
+    library(tm)
+    library(R.utils)
+    library(stringi)
+    library(ngram)
+    library(ggplot2)
+    library(SnowballC)
+    library(dplyr)
+    library(slam)
+    library(wordcloud)
+```
+
+# Read in the data
+We will now read in the data from the three sample files using the readLines function
+```{r}
+### Read in the Twitter Informatio
+### Set the encoding to LATIN1 to make sure that we are only looking at normal characters
+### Set the tool to skip Null Lines
+    
+    blogs <- readLines("~/Documents/R Working Directory/Course_10_Capstone/Data_Set/final/en_US/en_US.blogs.txt", encoding = "latin1" ,skipNul = TRUE)
+    news <- readLines("~/Documents/R Working Directory/Course_10_Capstone/Data_Set/final/en_US/en_US.news.txt", encoding = "latin1" ,skipNul = TRUE)
+    twitter <- readLines("~/Documents/R Working Directory/Course_10_Capstone/Data_Set/final/en_US/en_US.twitter.txt", encoding = "latin1", skipNul = TRUE)
+    
+    #test <-"THIS. â\u0080\u009c: You can dream about it or you can go out and make it happen.â\u0080\u009d"     #test2 <- stringi::stri_replace_all(test,"",regex="â")
+    #test3 <- gsub(pattern = "\\[u]{1}[0-9]{2}[a-z0-9]{2}","", x=test2)
+```
+
+# Sample and Clense the Data
+Given the size of the sample sets we are going to need to use a sample a portion of each sample data file. 
+
+When we did the analysis in the previous excercise we looked at 5% of the data, for this portion I'm going to look at 10%
+
+```{r}
+    
+    sample_size <-0.05
+    set.seed(1234) # Set the seed for testing purposes
+    new_words <- c(sample(blogs, length(blogs) * sample_size), 
+                   sample(news, length(news) * sample_size),
+                   sample(twitter, length(twitter) * sample_size))
+    
+
+    new_words<-stringi::stri_replace_all(new_words,"",regex="â")
+    sample_summary_stats <- data.frame(Source = "Aggregated Data", Lines = NA, Words = NA)
+    sample_summary_stats$Lines <- length(new_words) ### Find the number of lines per source file
+    sample_summary_stats$Words <- wordcount(new_words) ### Find the number of words per source file
+    sample_summary_stats$Words ### Output the list
+    
+    sample_summary_stats
+    
+    ### Get rid of the files that we just read in so that we can use the memory for other things
+    
+    rm(blogs)
+    rm(news)
+    rm(twitter)
+```
+
+# Create the Corpus 
+
+We'll use the Corpus functions from the TM Package to create a Corpus for our analysis.  We will convert all of the characters to lower class to simplify our analysis.
+
+```{r}
+
+    ### create corpus classs
+    my_corpus_for_Ngram <- VCorpus(VectorSource(new_words))
+    
+    ### Cleanse the information (again if required)
+    my_corpus_for_Ngram <- tm_map(my_corpus_for_Ngram, content_transformer(tolower))
+    my_corpus_for_Ngram <- tm_map(my_corpus_for_Ngram, removeNumbers)
+    my_corpus_for_Ngram <- tm_map(my_corpus_for_Ngram, removePunctuation) ### Remove any puncutation marks
+    my_corpus_for_Ngram <- tm_map(my_corpus_for_Ngram, stripWhitespace)
+    
+    ### We will not remove STEMS or STOP Words as we are focused on real sentances
+    #my_corpus_for_Ngram <- tm_map(my_corpus_for_Ngram, stemDocument) ### Remove Stems i.e., Tone, Tones, Toner --> Tone
+    #mmy_corpus_for_Ngram <- tm_map(my_corpus_for_Ngram, removeWords, stopwords("english"))
+    
+    ### Tokenize the Corpus so we can do our analysis
+
+    rm(new_words)
+    
+
+```
+
+
+
+# Create our N-Grams
+We are intersted in knowing the frequency of 2 and 3 N-Grams in the sample set for our analysis (we know the Unigrams from the word count).  We'll output the information at the end of the day.  
+
+Note for Bigram & Trigram analysis I am leaving in the Stem & Stop Words as they impact the string structure and would be interesting for the predictive model.
+
+```{r}
+
+
+    QuadgramTokenizer <-  function(x) unlist(lapply(ngrams(words(x), 4), paste, collapse = " "), use.names = FALSE)
+   
+
+    ### Quad-Gram Analysis
+    quad_tdm <- TermDocumentMatrix(my_corpus_for_Ngram, control = list(tokenize = QuadgramTokenizer))
+    rm(my_corpus_for_Ngram)
+
+    quad_wordfreq <- data.frame(quad_tdm$dimnames$Terms,WordFreq = NA) ### Create the matrix for our sample set word frequency
+    quad_wordfreq$WordFreq <-row_sums(quad_tdm,na.rm = FALSE) ### Use the ROW_SUM command to get the count of words from the Term       Document Matrix which is a Simple Triplet Matrix
+    colnames(quad_wordfreq) <-c("Term","WordFreq")
+    quad_wordfreq <- arrange(quad_wordfreq, -WordFreq)
+    
+    rm(quad_tdm) #Freeup the memory tied up with quad_tdm
+
+    quad_wordfreq$Term <- as.character(quad_wordfreq$Term)
+    
+    str4 <- strsplit(quad_wordfreq$Term,split=" ")
+
+    quad_wordfreq <- transform(quad_wordfreq,
+        one = sapply(str4,"[[",1),
+        two = sapply(str4,"[[",2),
+        three = sapply(str4,"[[",3), 
+        four = sapply(str4,"[[",4))
+    saveRDS(quad_wordfreq,"~/Documents/R Working Directory/Course_10_Capstone/Shiny_App_V3/quad_word_freq2.rds", compress = TRUE)
+    rm(str4)
+    
+    
+```
+
+# Predictor ...
+
+Now that we've got our Quad-Gram's I am going to take the matrix and break it out each row into words so that we can use the last 3 words of the sentence to see the potential matches for the 4th word 
+
+```{r}
+
+### Create a function that takes in the sample phrase along with the n-gram matrix and provides potential matches
+
+Potenital_Solutions <-function(Question, quad_wordfreq)
+
+{
+    
+    #Read in the Quad-Gram Matrix that has the words broken down into 4 columns
+    #Read in the question and strip away punctuation, white space, special characters and numbers
+    Question <- stripWhitespace(Question)
+    Question <- removePunctuation(Question)
+    Question <- removeNumbers(Question)    
+    
+    # Break the question into individual components and count the words so that we can identify the three words to input
+    Question <- do.call(rbind, strsplit(Question, ' '))
+    Question <- as.character(Question)
+    n <- wordcount(Question)
+    
+    # Identify the last 3 words in the sentence
+    word1 <- Question[n-2]
+    word2 <- Question[n-1]
+    word3 <- Question[n]
+
+    # Compare the last 3 words to the first 4 words in the N-Gram and display
+    solutions<-subset(quad_wordfreq, quad_wordfreq$one==word1 & quad_wordfreq$two == word2 & quad_wordfreq$three==word3)
+    
+    # Return the potential solutions
+    return(solutions)
+}
+```
+
+
+
+# Week 3 - Quiz 2: Natural language processing I
+
+1. The guy in front of me just bought a pound of bacon, a bouquet, and a case of ...
+    beer <-- H1
+    cheese
+    soda <-- H2
+    pretzels
+
+```{r}
+Q1 <- "The guy in front of me just bought a pound of bacon, a bouquet, and a case of"
+PS <- Potenital_Solutions(Q1,quad_wordfreq)
+Q1
+PS
+```
+
+2. You're the reason why I smile everyday. Can you follow me please? It would mean the ...
+
+    best
+    world <-- H1
+    universe
+    most <-- H2
+    
+```{r}
+Q1 <- "You're the reason why I smile everyday. Can you follow me please? It would mean the"
+PS <- Potenital_Solutions(Q1,quad_wordfreq)
+Q1
+PS 
+```
+
+3. Hey sunshine, can you follow me and make me the ...
+
+    saddest
+    happiest <-- H1
+    smelliest
+    bluest
+
+```{r}
+Q1 <- "Hey sunshine, can you follow me and make me the"
+PS <- Potenital_Solutions(Q1,quad_wordfreq)
+Q1
+PS 
+
+```
+
+4. Very early observations on the Bills game: Offense still struggling but the ..
+
+    crowd <-- H2
+    players
+    defense <-- H1
+    referees
+
+```{r}
+Q1 <- "Very early observations on the Bills game: Offense still struggling but the"
+PS <- Potenital_Solutions(Q1,quad_wordfreq)
+Q1
+PS 
+
+```
+5. Go on a romantic date at the ...
+
+    grocery 
+    beach <-H1
+    mall <-- H2
+    movies <--H3
+
+```{r}
+Q1 <- "Go on a romantic date at the"
+PS <- Potenital_Solutions(Q1,quad_wordfreq)
+Q1
+PS 
+
+```
+6. Well I'm pretty sure my granny has some old bagpipes in her garage I'll dust them off and be on my
+
+    horse
+    phone
+    way <-- H1
+    motorcycle
+
+```{r}
+Q1 <- "Well I'm pretty sure my granny has some old bagpipes in her garage I'll dust them off and be on my"
+PS <- Potenital_Solutions(Q1,quad_wordfreq)
+Q1
+PS 
+
+```
+7. Ohhhhh #PointBreak is on tomorrow. Love that film and haven't seen it in quite some ...
+
+    thing
+    time <-- H1
+    weeks
+    years <-- H2
+
+```{r}
+Q1 <- "Ohhhhh #PointBreak is on tomorrow. Love that film and haven't seen it in quite some"
+PS <- Potenital_Solutions(Q1,quad_wordfreq)
+Q1
+PS 
+
+```
+
+8. After the ice bucket challenge Louis will push his long wet hair out of his eyes with his little
+
+    toes
+    ears
+    eyes
+    fingers <--H1
+    
+```{r}
+Q1 <- "After the ice bucket challenge Louis will push his long wet hair out of his eyes with his"
+PS <- Potenital_Solutions(Q1,quad_wordfreq)
+Q1
+PS
+
+```
+9. Be grateful for the good times and keep the faith during the
+
+    sad
+    bad <-- H1
+    hard <--H2
+    worse
+    
+```{r}
+Q1 <- "Be grateful for the good times and keep the faith during the"
+PS <- Potenital_Solutions(Q1,quad_wordfreq)
+Q1
+PS
+```    
+10. If this isn't the cutest thing you've ever seen, then you must be
+
+    asleep
+    callous
+    insensitive <--H2
+    insane <-- H1
+    
+```{r}
+Q1<- "If this isn't the cutest thing you've ever seen, then you must be"
+PS <- Potenital_Solutions(Q1,quad_wordfreq)
+Q1
+PS
+```    
+
